@@ -11,7 +11,7 @@ const BASE_URL = "https://openrouter.ai/api/v1/chat/completions"
 
 // openrouter/free = official free model router, auto-selects from available free models
 // Falls back gracefully — never throws "no endpoints" errors
-const MODEL = "openrouter/free"
+const MODEL = "google/gemma-3-12b-it:free"
 
 async function callOpenRouter(messages, systemPrompt = "") {
   const body = {
