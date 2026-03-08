@@ -266,10 +266,80 @@ No shipments found.`
     }
 
     const messages = [{ role: "user", content: message }]
-    const reply = await chatGemini(messages, systemPrompt)
+    const raw = await chatGemini(messages, systemPrompt)
 
     log.ok(`Company AI replied in ${Date.now() - start}ms`)
-    res.json({ reply })
+    log.dim(`Raw: "${String(raw).slice(0, 120)}"`)
+
+    // Try to parse JSON action from response, fall back to plain text
+    let reply = raw || "Done."
+    let action = null
+    try {
+      const jsonMatch = String(raw).match(/\{[\s\S]*\}/)
+      if (jsonMatch) {
+        const parsed = JSON.parse(jsonMatch[0])
+        if (parsed.message) reply = parsed.message
+        if (parsed.action) action = parsed.action
+      }
+    } catch { /* plain text response, keep as-is */ }
+
+    // Execute action on backend directly — don't rely on frontend round-trip
+    if (action?.type && action.type !== "none") {
+      try {
+        // Resolve tracking number → UUID from context
+        const resolveShipment = (idOrTracking) => {
+          if (!context?.shipments) return idOrTracking
+          const match = context.shipments.find(s =>
+            s.tracking_number === idOrTracking || s.uuid === idOrTracking || s.id === idOrTracking
+          )
+          return match?.uuid || match?.id || idOrTracking
+        }
+
+        const resolveCancellation = (idOrTracking) => {
+          if (!context?.cancellations) return idOrTracking
+          const match = context.cancellations.find(c =>
+            c.id === idOrTracking || c.tracking_number === idOrTracking
+          )
+          return match?.id || idOrTracking
+        }
+
+        if (action.type === "status_update" && action.shipment_id) {
+          const uuid = resolveShipment(action.shipment_id)
+          const { error } = await supabaseAdmin.from("shipments").update({ status: action.status }).eq("id", uuid)
+          if (error) log.warn(`Status update failed: ${error.message}`)
+          else log.ok(`Shipment ${action.shipment_id} → ${action.status}`)
+
+        } else if (action.type === "approve_cancel" && action.cancellation_id) {
+          const uuid = resolveCancellation(action.cancellation_id)
+          const { data: cr } = await supabaseAdmin.from("cancellation_requests").select("shipment_id").eq("id", uuid).single()
+          await supabaseAdmin.from("cancellation_requests").update({ status: "approved", reviewed_at: new Date().toISOString() }).eq("id", uuid)
+          if (cr?.shipment_id) await supabaseAdmin.from("shipments").update({ status: "cancelled" }).eq("id", cr.shipment_id)
+          log.ok(`Cancellation ${uuid} approved`)
+
+        } else if (action.type === "reject_cancel" && action.cancellation_id) {
+          const uuid = resolveCancellation(action.cancellation_id)
+          await supabaseAdmin.from("cancellation_requests").update({ status: "rejected", rejection_reason: action.reason || "Rejected by AI", reviewed_at: new Date().toISOString() }).eq("id", uuid)
+          log.ok(`Cancellation ${uuid} rejected`)
+
+        } else if (action.type === "assign_carrier" && action.shipment_id) {
+          const uuid = resolveShipment(action.shipment_id)
+          await supabaseAdmin.from("shipments").update({ carrier: action.carrier }).eq("id", uuid)
+          log.ok(`Carrier assigned: ${action.carrier} → ${action.shipment_id}`)
+
+        } else if (action.type === "flag_delay" && action.shipment_id) {
+          const uuid = resolveShipment(action.shipment_id)
+          await supabaseAdmin.from("shipments").update({ status: "delayed" }).eq("id", uuid)
+          log.ok(`Shipment ${action.shipment_id} flagged as delayed`)
+        }
+
+        action.executed = true
+      } catch (e) {
+        log.warn(`Action execution failed: ${e.message}`)
+        action.executed = false
+      }
+    }
+
+    res.json({ reply, action })
 
   } catch (err) {
     log.err(`Company AI error: ${err.message}`)
