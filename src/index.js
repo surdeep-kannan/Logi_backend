@@ -3,7 +3,8 @@ import cors from "cors"
 import helmet from "helmet"
 import rateLimit from "express-rate-limit"
 import dotenv from "dotenv"
-
+import cancellationRoutes from "./routes/cancellations.js"
+import companyAuthRoutes  from "./routes/companyAuth.js"
 import authRoutes         from "./routes/routes_auth.js"
 import shipmentRoutes     from "./routes/shipments.js"
 import orderRoutes        from "./routes/orders.js"
@@ -74,6 +75,8 @@ app.use("/api/ai",           aiRoutes)
 app.use("/api/carrier",      carrierRoutes)
 app.use("/api/roi",          roiRoutes)
 app.use("/api/upload",       uploadRoutes)
+app.use("/api/cancellations",  cancellationRoutes)
+app.use("/api/company/auth",   companyAuthRoutes)
 
 // ── 404 handler ───────────────────────────────────────────
 app.use((req, res) => {
