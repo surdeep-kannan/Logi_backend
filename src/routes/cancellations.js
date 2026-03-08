@@ -1,7 +1,6 @@
 import express from "express"
 import { supabaseAdmin } from "../config/supabase.js"
-import { requireAuth } from "../middleware/auth.js"
-
+import { requireCompanyAuth } from "../middleware/requireCompanyAuth.js"
 const router = express.Router()
 
 // GET /api/cancellations — all cancellation requests with shipment + user info
