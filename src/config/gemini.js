@@ -11,7 +11,7 @@ const BASE_URL = "https://openrouter.ai/api/v1/chat/completions"
 
 // openrouter/free = official free model router, auto-selects from available free models
 // Falls back gracefully — never throws "no endpoints" errors
-const MODEL = "google/gemma-3-27b-it:free" // Replaced deprecated gemini-2.0-flash-exp:free
+const MODEL = "stepfun/step-3.5-flash:free" // Replaced deprecated gemini and crashing gemma models
 
 if (!OPENROUTER_API_KEY) {
   console.warn("⚠️ OPENROUTER_API_KEY is missing. AI features will not work.");
