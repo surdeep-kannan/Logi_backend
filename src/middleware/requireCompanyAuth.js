@@ -13,11 +13,11 @@ export async function requireCompanyAuth(req, res, next) {
     const { data: { user }, error } = await supabaseAdmin.auth.getUser(token)
     if (error || !user) return res.status(401).json({ error: "Invalid token" })
 
-    // Check they exist in company_staff and are active
+    // Check they exist in company_staff by email and are active
     const { data: staff, error: staffError } = await supabaseAdmin
       .from("company_staff")
       .select("id, email, full_name, role, is_active")
-      .eq("auth_user_id", user.id)
+      .eq("email", user.email)
       .single()
 
     if (staffError || !staff) {

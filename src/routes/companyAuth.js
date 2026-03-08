@@ -4,7 +4,6 @@ import { supabaseAdmin, supabase } from "../config/supabase.js"
 const router = express.Router()
 
 // POST /api/company/auth/login
-// Uses Supabase Auth — company staff must exist in both auth.users + company_staff table
 router.post("/login", async (req, res) => {
   try {
     const { email, password } = req.body
@@ -14,11 +13,11 @@ router.post("/login", async (req, res) => {
     const { data: authData, error: authError } = await supabase.auth.signInWithPassword({ email, password })
     if (authError) return res.status(401).json({ error: "Invalid credentials" })
 
-    // Verify they exist in company_staff table
+    // Verify they exist in company_staff table by email
     const { data: staff, error: staffError } = await supabaseAdmin
       .from("company_staff")
       .select("id, email, full_name, role, is_active")
-      .eq("auth_user_id", authData.user.id)
+      .eq("email", authData.user.email)
       .single()
 
     if (staffError || !staff) return res.status(403).json({ error: "Not authorised as company staff" })
