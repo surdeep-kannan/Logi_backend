@@ -11,7 +11,11 @@ const BASE_URL = "https://openrouter.ai/api/v1/chat/completions"
 
 // openrouter/free = official free model router, auto-selects from available free models
 // Falls back gracefully — never throws "no endpoints" errors
-const MODEL = "google/gemini-2.0-flash-exp:free"
+const MODEL = "google/gemma-3-27b-it:free" // Replaced deprecated gemini-2.0-flash-exp:free
+
+if (!OPENROUTER_API_KEY) {
+  console.warn("⚠️ OPENROUTER_API_KEY is missing. AI features will not work.");
+}
 
 async function callOpenRouter(messages, systemPrompt = "") {
   const body = {
@@ -19,7 +23,7 @@ async function callOpenRouter(messages, systemPrompt = "") {
     messages: [
       ...(systemPrompt ? [{ role: "system", content: systemPrompt }] : []),
       ...messages.map(m => ({
-        role:    m.role === "assistant" ? "assistant" : "user",
+        role: m.role === "assistant" ? "assistant" : "user",
         content: m.content,
       })),
     ],
@@ -30,9 +34,9 @@ async function callOpenRouter(messages, systemPrompt = "") {
     method: "POST",
     headers: {
       "Authorization": `Bearer ${OPENROUTER_API_KEY}`,
-      "Content-Type":  "application/json",
-      "HTTP-Referer":  "http://localhost:3001",
-      "X-Title":       "LoRRI.ai",
+      "Content-Type": "application/json",
+      "HTTP-Referer": "http://localhost:3001",
+      "X-Title": "LoRRI.ai",
     },
     body: JSON.stringify(body),
   })
