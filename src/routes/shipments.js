@@ -1,7 +1,7 @@
 import express from "express"
-import { requireCompanyAuth } from "../middleware/requireCompanyAuth.js"
 import { supabaseAdmin } from "../config/supabase.js"
 import { requireAuth } from "../middleware/auth.js"
+import { requireCompanyAuth } from "../middleware/requireCompanyAuth.js"
 
 const router = express.Router()
 
@@ -114,39 +114,6 @@ router.post("/", requireAuth, async (req, res) => {
   }
 })
 
-// ── GET /api/shipments/stats/summary ──────────────────────
-// Dashboard KPI stats  (MUST be before /:id to avoid shadowing)
-router.get("/stats/summary", requireAuth, async (req, res) => {
-  try {
-    const now   = new Date()
-    const start = new Date(now.getFullYear(), now.getMonth(), 1).toISOString()
-
-    const { data: all, error } = await supabaseAdmin
-      .from("shipments")
-      .select("status, declared_value, transport_mode, created_at")
-      .eq("user_id", req.user.id)
-
-    if (error) return res.status(400).json({ error: error.message })
-
-    const stats = {
-      total:         all.length,
-      active:        all.filter(s => !["delivered","cancelled"].includes(s.status)).length,
-      in_transit:    all.filter(s => s.status === "in_transit").length,
-      delivered:     all.filter(s => s.status === "delivered").length,
-      delayed:       all.filter(s => s.status === "delayed").length,
-      pending:       all.filter(s => s.status === "pending").length,
-      // Only sum shipments created this calendar month
-      monthly_spend: all
-        .filter(s => s.created_at >= start)
-        .reduce((sum, s) => sum + (s.declared_value || 0), 0),
-    }
-
-    res.json({ stats })
-  } catch (err) {
-    res.status(500).json({ error: "Internal server error" })
-  }
-})
-
 // ── PUT /api/shipments/:id ─────────────────────────────────
 // Update shipment (status, location etc.)
 router.put("/:id", requireAuth, async (req, res) => {
@@ -185,48 +152,35 @@ router.get("/:id/timeline", requireAuth, async (req, res) => {
   }
 })
 
-export default router
-import { requireCompanyAuth } from "../middleware/requireCompanyAuth.js"
-
-// ── COMPANY ROUTES ────────────────────────────────────────
-
-router.get("/company/all", requireCompanyAuth, async (req, res) => {
-  try {
-    const { status, limit = 100, offset = 0 } = req.query
-    let query = supabaseAdmin
-      .from("shipments")
-      .select("*, profiles(full_name, email)")
-      .order("created_at", { ascending: false })
-      .range(Number(offset), Number(offset) + Number(limit) - 1)
-    if (status && status !== "all") query = query.eq("status", status)
-    const { data, error } = await query
-    if (error) return res.status(400).json({ error: error.message })
-    res.json(data || [])
-  } catch (err) { res.status(500).json({ error: err.message }) }
-})
-
-router.patch("/company/:id", requireCompanyAuth, async (req, res) => {
-  try {
-    const { data, error } = await supabaseAdmin
-      .from("shipments").update(req.body).eq("id", req.params.id).select().single()
-    if (error) return res.status(400).json({ error: error.message })
-    res.json({ shipment: data })
-  } catch (err) { res.status(500).json({ error: err.message }) }
-})
-
-router.get("/company/stats", requireCompanyAuth, async (req, res) => {
+// ── GET /api/shipments/stats/summary ──────────────────────
+// Dashboard KPI stats
+router.get("/stats/summary", requireAuth, async (req, res) => {
   try {
     const { data: all, error } = await supabaseAdmin
-      .from("shipments").select("status, declared_value")
+      .from("shipments")
+      .select("status, declared_value, transport_mode")
+      .eq("user_id", req.user.id)
+
     if (error) return res.status(400).json({ error: error.message })
-    res.json({
-      total_shipments:   all.length,
-      active_shipments:  all.filter(s => s.status === "in_transit").length,
-      delayed_shipments: all.filter(s => s.status === "delayed").length,
-      delivered_mtd:     all.filter(s => s.status === "delivered").length,
-      monthly_spend:     all.reduce((sum, s) => sum + (Number(s.declared_value) || 0), 0),
-    })
-  } catch (err) { res.status(500).json({ error: err.message }) }
+
+    const stats = {
+      total:       all.length,
+      active:      all.filter(s => !["delivered","cancelled"].includes(s.status)).length,
+      in_transit:  all.filter(s => s.status === "in_transit").length,
+      delivered:   all.filter(s => s.status === "delivered").length,
+      delayed:     all.filter(s => s.status === "delayed").length,
+      pending:     all.filter(s => s.status === "pending").length,
+      monthly_spend: all.reduce((sum, s) => sum + (s.declared_value || 0), 0),
+    }
+
+    res.json({ stats })
+  } catch (err) {
+    res.status(500).json({ error: "Internal server error" })
+  }
+})
+
+
+// ── COMPANY ROUTES (no user_id filter) ───────────────────
 
 router.get("/company/all", requireCompanyAuth, async (req, res) => {
   try {
