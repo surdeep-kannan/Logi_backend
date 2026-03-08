@@ -28,6 +28,7 @@ app.use(cors({
     process.env.FRONTEND_URL,
     "https://logi-company-r55jleuk1-surdeep-kannans-projects.vercel.app",
     "https://logisticnowhack.vercel.app",
+    "https://logi-company.vercel.app",
   ],
   credentials: true,
 }))
