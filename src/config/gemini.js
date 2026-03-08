@@ -11,7 +11,7 @@ const BASE_URL = "https://openrouter.ai/api/v1/chat/completions"
 
 // openrouter/free = official free model router, auto-selects from available free models
 // Falls back gracefully — never throws "no endpoints" errors
-const MODEL = "deepseek/deepseek-chat-v3-0324:free"
+const MODEL = "meta-llama/llama-3.3-70b-instruct:free"
 
 async function callOpenRouter(messages, systemPrompt = "") {
   const body = {
