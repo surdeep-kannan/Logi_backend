@@ -33,9 +33,38 @@ router.post("/chat", requireAuth, async (req, res) => {
       console.warn("chat history skip:", e.message)
     }
 
+    // Fetch context limits
+    let userShipments = []
+    let userProfile = null
+    try {
+      const [{ data: shipments }, { data: profile }] = await Promise.all([
+        supabaseAdmin
+          .from("shipments")
+          .select("id, tracking_number, origin_city, dest_city, status, carrierName, transport_mode, created_at, delivery_date")
+          .eq("user_id", req.user.id)
+          .order("created_at", { ascending: false })
+          .limit(15),
+        supabaseAdmin
+          .from("profiles")
+          .select("full_name, company_id")
+          .eq("id", req.user.id)
+          .single()
+      ])
+      userShipments = shipments || []
+      userProfile = profile || {}
+    } catch (e) {
+      console.warn("User context fetch error:", e.message)
+    }
+
     let systemPrompt = SYSTEM_PROMPT
+    systemPrompt += `\n\nYou are talking to: ${userProfile?.full_name || "a User"}`
+    if (userShipments.length > 0) {
+      systemPrompt += `\n\nHere are their recent shipments in JSON format:\n${JSON.stringify(userShipments, null, 2)}`
+      systemPrompt += `\nUse this data to answer questions about their specific shipments, statuses, and counts.`
+    }
+
     if (shipment_context) {
-      systemPrompt += `\n\nCurrent shipment context:\n${JSON.stringify(shipment_context, null, 2)}`
+      systemPrompt += `\n\nCurrent shipment context (frontend UI focus):\n${JSON.stringify(shipment_context, null, 2)}`
     }
 
     const messages = [...pastMessages, { role: "user", content: message }]
@@ -43,9 +72,9 @@ router.post("/chat", requireAuth, async (req, res) => {
 
     // Save to DB — fire and forget
     supabaseAdmin.from("chat_history").insert([
-      { user_id: req.user.id, role: "user",      content: message },
-      { user_id: req.user.id, role: "assistant", content: reply   },
-    ]).then(() => {}).catch(() => {})
+      { user_id: req.user.id, role: "user", content: message },
+      { user_id: req.user.id, role: "assistant", content: reply },
+    ]).then(() => { }).catch(() => { })
 
     res.json({ reply })
   } catch (err) {
@@ -93,8 +122,8 @@ Mode: ${transport_mode || "any"}, Priority: ${priority || "cost"}
 Return ONLY valid JSON, no markdown:
 {"routes":[{"id":"ai-1","name":"string","tag":"AI Recommended","carrier":"string","mode":"road","duration":"2 days","price":42500,"currency":"INR","savings_pct":18,"on_time_pct":97,"co2":245,"highlights":["h1","h2"]}]}`
 
-    const text   = await askGemini(prompt)
-    const clean  = text.replace(/```json|```/g, "").trim()
+    const text = await askGemini(prompt)
+    const clean = text.replace(/```json|```/g, "").trim()
     const parsed = JSON.parse(clean)
     res.json(parsed)
   } catch (err) {
