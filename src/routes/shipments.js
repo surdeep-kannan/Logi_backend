@@ -1,4 +1,5 @@
 import express from "express"
+import { requireCompanyAuth } from "../middleware/requireCompanyAuth.js"
 import { supabaseAdmin } from "../config/supabase.js"
 import { requireAuth } from "../middleware/auth.js"
 
@@ -182,6 +183,76 @@ router.get("/:id/timeline", requireAuth, async (req, res) => {
   } catch (err) {
     res.status(500).json({ error: "Internal server error" })
   }
+})
+
+export default router
+import { requireCompanyAuth } from "../middleware/requireCompanyAuth.js"
+
+// ── COMPANY ROUTES ────────────────────────────────────────
+
+router.get("/company/all", requireCompanyAuth, async (req, res) => {
+  try {
+    const { status, limit = 100, offset = 0 } = req.query
+    let query = supabaseAdmin
+      .from("shipments")
+      .select("*, profiles(full_name, email)")
+      .order("created_at", { ascending: false })
+      .range(Number(offset), Number(offset) + Number(limit) - 1)
+    if (status && status !== "all") query = query.eq("status", status)
+    const { data, error } = await query
+    if (error) return res.status(400).json({ error: error.message })
+    res.json(data || [])
+  } catch (err) { res.status(500).json({ error: err.message }) }
+})
+
+router.patch("/company/:id", requireCompanyAuth, async (req, res) => {
+  try {
+    const { data, error } = await supabaseAdmin
+      .from("shipments").update(req.body).eq("id", req.params.id).select().single()
+    if (error) return res.status(400).json({ error: error.message })
+    res.json({ shipment: data })
+  } catch (err) { res.status(500).json({ error: err.message }) }
+})
+
+router.get("/company/stats", requireCompanyAuth, async (req, res) => {
+  try {
+    const { data: all, error } = await supabaseAdmin
+      .from("shipments").select("status, declared_value")
+    if (error) return res.status(400).json({ error: error.message })
+    res.json({
+      total_shipments:   all.length,
+      active_shipments:  all.filter(s => s.status === "in_transit").length,
+      delayed_shipments: all.filter(s => s.status === "delayed").length,
+      delivered_mtd:     all.filter(s => s.status === "delivered").length,
+      monthly_spend:     all.reduce((sum, s) => sum + (Number(s.declared_value) || 0), 0),
+    })
+  } catch (err) { res.status(500).json({ error: err.message }) }
+
+router.get("/company/all", requireCompanyAuth, async (req, res) => {
+  try {
+    const { status, limit = 100, offset = 0 } = req.query
+    let query = supabaseAdmin.from("shipments").select("*, profiles(full_name, email)").order("created_at", { ascending: false }).range(Number(offset), Number(offset) + Number(limit) - 1)
+    if (status && status !== "all") query = query.eq("status", status)
+    const { data, error } = await query
+    if (error) return res.status(400).json({ error: error.message })
+    res.json(data || [])
+  } catch (err) { res.status(500).json({ error: err.message }) }
+})
+
+router.patch("/company/:id", requireCompanyAuth, async (req, res) => {
+  try {
+    const { data, error } = await supabaseAdmin.from("shipments").update(req.body).eq("id", req.params.id).select().single()
+    if (error) return res.status(400).json({ error: error.message })
+    res.json({ shipment: data })
+  } catch (err) { res.status(500).json({ error: err.message }) }
+})
+
+router.get("/company/stats", requireCompanyAuth, async (req, res) => {
+  try {
+    const { data: all, error } = await supabaseAdmin.from("shipments").select("status, declared_value")
+    if (error) return res.status(400).json({ error: error.message })
+    res.json({ total_shipments: all.length, active_shipments: all.filter(s => s.status === "in_transit").length, delayed_shipments: all.filter(s => s.status === "delayed").length, delivered_mtd: all.filter(s => s.status === "delivered").length, monthly_spend: all.reduce((sum, s) => sum + (Number(s.declared_value) || 0), 0) })
+  } catch (err) { res.status(500).json({ error: err.message }) }
 })
 
 export default router
