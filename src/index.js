@@ -13,6 +13,7 @@ import aiRoutes           from "./routes/ai.js"
 import carrierRoutes      from "./routes/carrier.js"
 import roiRoutes          from "./routes/roi.js"
 import uploadRoutes       from "./routes/upload.js"
+import paymentRoutes      from "./routes/payments.js"   // ← NEW
 
 dotenv.config()
 
@@ -36,15 +37,14 @@ app.use(cors({
 
 // ── Rate limiting ─────────────────────────────────────────
 const limiter = rateLimit({
-  windowMs: 15 * 60 * 1000, // 15 minutes
+  windowMs: 15 * 60 * 1000,
   max:      100,
   message:  { error: "Too many requests, please try again later" },
 })
 app.use("/api", limiter)
 
-// AI endpoints — stricter limit
 const aiLimiter = rateLimit({
-  windowMs: 60 * 1000, // 1 minute
+  windowMs: 60 * 1000,
   max:      20,
   message:  { error: "AI rate limit exceeded, please wait" },
 })
@@ -78,6 +78,7 @@ app.use("/api/roi",          roiRoutes)
 app.use("/api/upload",       uploadRoutes)
 app.use("/api/cancellations",  cancellationRoutes)
 app.use("/api/company/auth",   companyAuthRoutes)
+app.use("/api/payments",       paymentRoutes)          // ← NEW
 
 // ── 404 handler ───────────────────────────────────────────
 app.use((req, res) => {
