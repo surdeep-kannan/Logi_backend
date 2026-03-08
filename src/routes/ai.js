@@ -33,7 +33,7 @@ async function getUserShipmentContext(userId) {
 
     const summary = {
       total:      shipments.length,
-      active:     shipments.filter(s => s.status === "in_transit").length,
+      active:     shipments.filter(s => s.status === "in-transit").length,
       pending:    shipments.filter(s => s.status === "pending").length,
       delivered:  shipments.filter(s => s.status === "delivered").length,
       delayed:    shipments.filter(s => s.status === "delayed").length,
@@ -177,51 +177,103 @@ router.delete("/chat/history", requireAuth, async (req, res) => {
 })
 
 // ── POST /api/ai/route ────────────────────────────────────
-// AI provides route names, carriers, highlights & reasoning.
-// All pricing/transit is computed client-side with real NITI Aayog rates.
 router.post("/route", requireAuth, async (req, res) => {
   const start = Date.now()
   try {
     const { origin, destination, cargo_type, weight, transport_mode, priority } = req.body
     log.info(`AI Route  ${origin} → ${destination}  [${cargo_type}, ${weight}kg]`)
 
-    const systemPrompt = `You are a freight logistics expert for India. Always respond with ONLY a JSON object. No explanation. No markdown. No text before or after the JSON.`
+    const prompt = `Generate 2 AI-optimized freight route recommendations for:
+Origin: ${origin}, Destination: ${destination}, Cargo: ${cargo_type} ${weight}kg
+Mode: ${transport_mode || "any"}, Priority: ${priority || "cost"}
 
-    const prompt = `Shipment: ${origin} → ${destination}
-Cargo: ${cargo_type}, ${weight}kg
-Mode: ${transport_mode || "road"}
-Priority: ${priority || "balanced"}
+Return ONLY valid JSON, no markdown:
+{"routes":[{"id":"ai-1","name":"string","tag":"AI Recommended","carrier":"string","mode":"road","duration":"2 days","price":42500,"currency":"INR","savings_pct":18,"on_time_pct":97,"co2":245,"highlights":["h1","h2"]}]}`
 
-Give me 2 different route options. Use real Indian carriers and highway names.
-Route 1 should be the fastest/most reliable option.
-Route 2 should be a different corridor or carrier (cost-optimized, multi-modal, or alternate highway).
-
-Respond with ONLY this JSON (fill in the angle bracket fields):
-{"routes":[{"name":"<highway or corridor name, e.g. NH48 Express>","carrier":"<real Indian carrier>","highlights":["<3 to 5 word feature>","<3 to 5 word feature>","<3 to 5 word feature>"],"on_time_pct":<85 to 98>},{"name":"<different route name>","carrier":"<different real Indian carrier>","highlights":["<3 to 5 word feature>","<3 to 5 word feature>","<3 to 5 word feature>"],"on_time_pct":<82 to 95>}]}`
-
-    const text  = await askGemini(prompt, systemPrompt)
-    const clean = text.replace(/```json|```/g, "").trim()
-    const jsonMatch = clean.match(/\{[\s\S]*\}/)
-    if (!jsonMatch) throw new Error("No JSON in response")
-
-    const parsed = JSON.parse(jsonMatch[0])
-    if (!Array.isArray(parsed?.routes) || parsed.routes.length < 2) throw new Error("Bad structure")
-
-    // Sanitize — only keep the fields we trust from AI (never price/duration)
-    const safe = {
-      routes: parsed.routes.slice(0, 2).map(r => ({
-        name:        String(r.name        || "").slice(0, 60),
-        carrier:     String(r.carrier     || "").slice(0, 60),
-        highlights:  Array.isArray(r.highlights) ? r.highlights.slice(0, 5).map(h => String(h).slice(0, 50)) : [],
-        on_time_pct: Math.min(99, Math.max(80, parseInt(r.on_time_pct) || 92)),
-      }))
-    }
+    const text   = await askGemini(prompt)
+    const clean  = text.replace(/```json|```/g, "").trim()
+    const parsed = JSON.parse(clean)
 
     log.ok(`Route generated in ${Date.now() - start}ms`)
-    res.json(safe)
+    res.json(parsed)
   } catch (err) {
-    log.warn(`AI route skipped: ${err.message}`)
-    res.json({ routes: null })   // frontend uses buildRoutes() fallback — no crash
+    log.err(`AI route error: ${err.message}`)
+    console.error(err)
+    res.status(500).json({ error: "Route recommendation unavailable" })
+  }
+})
+
+
+// ── POST /api/ai/company/chat ─────────────────────────────
+// Company portal AI — uses passed context (all shipments, not user-filtered)
+router.post("/company/chat", requireAuth, async (req, res) => {
+  const start = Date.now()
+  try {
+    const { message, context } = req.body
+    if (!message) return res.status(400).json({ error: "Message is required" })
+
+    log.info(`Company AI Chat  [${req.user.email}]`)
+    log.dim(`User: "${message.slice(0, 80)}${message.length > 80 ? "…" : ""}"`)
+
+    // Build system prompt with full ops context
+    let systemPrompt = `You are LoRRI OPS AI, an operations assistant for LoRRI.ai company staff.
+You have full access to ALL customer shipments and cancellation requests.
+You can take actions: update shipment status, approve/reject cancellations, assign carriers, flag delays.
+
+When taking an action, respond with JSON:
+{
+  "message": "Human readable response",
+  "action": {
+    "type": "status_update" | "approve_cancel" | "reject_cancel" | "assign_carrier" | "flag_delay" | "none",
+    "shipment_id": "tracking number or uuid",
+    "cancellation_id": "uuid if applicable",
+    "status": "pending|in_transit|delivered|cancelled|delayed",
+    "carrier": "carrier name if assigning",
+    "reason": "reason if rejecting"
+  }
+}
+
+Status progression: pending → in_transit → delivered
+"Move to next stage" means: pending→in_transit, in_transit→delivered
+
+If no action needed, set action.type to "none" and just return the message as plain text.
+Always use tracking numbers (SHP-XXXX) to refer to shipments.`
+
+    if (context?.shipments?.length > 0) {
+      systemPrompt += `
+
+━━ ALL SHIPMENTS (${context.shipments.length} total) ━━
+`
+      context.shipments.forEach(s => {
+        systemPrompt += `• ${s.tracking_number || s.id} — ${(s.status || "unknown").toUpperCase()} | ${s.route || `${s.origin_city}→${s.dest_city}`} | Customer: ${s.customer || "—"} | Carrier: ${s.carrier || "—"} | ETA: ${s.eta || "—"} | UUID: ${s.uuid || s.id}
+`
+      })
+    } else {
+      systemPrompt += `
+
+No shipments found.`
+    }
+
+    if (context?.cancellations?.length > 0) {
+      systemPrompt += `
+
+━━ CANCELLATION REQUESTS (${context.cancellations.length} total) ━━
+`
+      context.cancellations.forEach(c => {
+        systemPrompt += `• ${c.tracking_number || c.id} — ${(c.status || "pending").toUpperCase()} | Customer: ${c.customer || "—"} | Reason: ${c.reason || "—"} | UUID: ${c.id}
+`
+      })
+    }
+
+    const messages = [{ role: "user", content: message }]
+    const reply = await chatGemini(messages, systemPrompt)
+
+    log.ok(`Company AI replied in ${Date.now() - start}ms`)
+    res.json({ reply })
+
+  } catch (err) {
+    log.err(`Company AI error: ${err.message}`)
+    res.status(500).json({ error: "AI service unavailable", detail: err.message })
   }
 })
 
