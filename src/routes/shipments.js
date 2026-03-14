@@ -2,6 +2,7 @@ import express from "express"
 import { supabaseAdmin } from "../config/supabase.js"
 import { requireAuth } from "../middleware/auth.js"
 import { requireCompanyAuth } from "../middleware/requireCompanyAuth.js"
+import { geocodeAndDistance, extractShipmentAddressParts } from "../config/ors.js"  // ← NEW
 
 const router = express.Router()
 
@@ -38,7 +39,6 @@ router.get("/:id", requireAuth, async (req, res) => {
   try {
     const { id } = req.params
 
-    // Try tracking number first, then UUID
     let query = supabaseAdmin
       .from("shipments")
       .select(`*, shipment_timeline(* )`)
@@ -76,6 +76,33 @@ router.post("/", requireAuth, async (req, res) => {
       .eq("id", req.user.id)
       .single()
 
+    // ── NEW: Geocode origin + dest addresses before insert ──
+    // Pull address parts from the request body using the same field names
+    // your frontend already sends (origin_address, origin_city, etc.)
+    let geoData = null
+    try {
+      geoData = await geocodeAndDistance(
+        {
+          address: body.origin_address,
+          city:    body.origin_city,
+          state:   body.origin_state,
+          zip:     body.origin_zip,
+        },
+        {
+          address: body.dest_address,
+          city:    body.dest_city,
+          state:   body.dest_state,
+          zip:     body.dest_zip,
+        }
+      )
+      if (geoData) {
+        console.log(`✓ Geocoded: ${body.origin_city} → ${body.dest_city} | ${geoData.distanceKm}km | ${geoData.durationHrs}hrs`)
+      }
+    } catch (geoErr) {
+      // Non-blocking — shipment still creates even if ORS is down
+      console.warn("Geocoding failed (non-fatal):", geoErr.message)
+    }
+
     const { data: shipment, error } = await supabaseAdmin
       .from("shipments")
       .insert({
@@ -85,6 +112,25 @@ router.post("/", requireAuth, async (req, res) => {
         tracking_number: trackingNumber,
         status:          "pending",
         status_color:    "amber",
+
+        // ── NEW: Store real coordinates + distance from ORS ──
+        // origin pin — exact pickup location on map
+        origin_lat:   geoData?.origin?.lat  ?? null,
+        origin_lng:   geoData?.origin?.lng  ?? null,
+
+        // dest pin — exact delivery location on map
+        dest_lat:     geoData?.dest?.lat    ?? null,
+        dest_lng:     geoData?.dest?.lng    ?? null,
+
+        // current position starts at origin
+        current_lat:  geoData?.origin?.lat  ?? null,
+        current_lng:  geoData?.origin?.lng  ?? null,
+
+        // real road distance + estimated drive time
+        total_km:     geoData?.distanceKm   ?? null,
+        remaining_km: geoData?.distanceKm   ?? null,
+        completed_km: 0,
+        est_drive_hrs: geoData?.durationHrs ?? null,
       })
       .select()
       .single()
@@ -107,7 +153,19 @@ router.post("/", requireAuth, async (req, res) => {
       shipment_id: shipment.id,
     })
 
-    res.status(201).json({ shipment, tracking_number: trackingNumber })
+    // Return geocoding data to frontend so it can pin the map immediately
+    res.status(201).json({
+      shipment,
+      tracking_number: trackingNumber,
+      geo: geoData ? {
+        origin_lat:   geoData.origin.lat,
+        origin_lng:   geoData.origin.lng,
+        dest_lat:     geoData.dest.lat,
+        dest_lng:     geoData.dest.lng,
+        distance_km:  geoData.distanceKm,
+        duration_hrs: geoData.durationHrs,
+      } : null,
+    })
   } catch (err) {
     console.error("Create shipment error:", err)
     res.status(500).json({ error: "Internal server error" })
@@ -153,7 +211,6 @@ router.get("/:id/timeline", requireAuth, async (req, res) => {
 })
 
 // ── GET /api/shipments/stats/summary ──────────────────────
-// Dashboard KPI stats
 router.get("/stats/summary", requireAuth, async (req, res) => {
   try {
     const { data: all, error } = await supabaseAdmin
@@ -164,12 +221,12 @@ router.get("/stats/summary", requireAuth, async (req, res) => {
     if (error) return res.status(400).json({ error: error.message })
 
     const stats = {
-      total:       all.length,
-      active:      all.filter(s => !["delivered","cancelled"].includes(s.status)).length,
-      in_transit:  all.filter(s => s.status === "in_transit").length,
-      delivered:   all.filter(s => s.status === "delivered").length,
-      delayed:     all.filter(s => s.status === "delayed").length,
-      pending:     all.filter(s => s.status === "pending").length,
+      total:         all.length,
+      active:        all.filter(s => !["delivered","cancelled"].includes(s.status)).length,
+      in_transit:    all.filter(s => s.status === "in_transit").length,
+      delivered:     all.filter(s => s.status === "delivered").length,
+      delayed:       all.filter(s => s.status === "delayed").length,
+      pending:       all.filter(s => s.status === "pending").length,
       monthly_spend: all.reduce((sum, s) => sum + (s.declared_value || 0), 0),
     }
 
@@ -180,7 +237,7 @@ router.get("/stats/summary", requireAuth, async (req, res) => {
 })
 
 
-// ── COMPANY ROUTES (no user_id filter) ───────────────────
+// ── COMPANY ROUTES (no user_id filter) ────────────────────
 
 router.get("/company/all", requireCompanyAuth, async (req, res) => {
   try {
